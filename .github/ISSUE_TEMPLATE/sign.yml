@@ -1,0 +1,53 @@
+name: Sign the Paris Initiative
+description: Add your signature to the Paris Initiative without opening a pull request.
+title: "Sign: <Your Name or Organization>"
+labels: ["signature"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for signing the Paris Initiative.
+        Read the full text in [README.md](../blob/main/README.md) before submitting.
+        We will convert your submission into the next signatories pull request.
+
+  - type: input
+    id: name
+    attributes:
+      label: Name (individual) OR organization name
+      placeholder: Dr. Jane Doe  —or—  Example Foundation
+    validations:
+      required: true
+
+  - type: input
+    id: affiliation
+    attributes:
+      label: Affiliation (optional, for individuals)
+      placeholder: University of Paris
+
+  - type: input
+    id: url
+    attributes:
+      label: Verifying URL (optional but recommended)
+      placeholder: https://example.org/about-me
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: List me under
+      options:
+        - Organizations
+        - Individuals
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: endorsement
+    attributes:
+      label: Endorsement
+      options:
+        - label: I have read the Paris Initiative in full and I publicly endorse the four principles and next steps.
+          required: true
+        - label: I understand my entry will be public and reproduced under CC BY 4.0.
+          required: true
+        - label: I have authorisation to commit on behalf of the affiliation/organization listed above (if any).
+          required: true
