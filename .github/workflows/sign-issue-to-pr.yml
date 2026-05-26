@@ -1,0 +1,194 @@
+name: Sign-issue → PR
+
+# When someone files a "Sign the Paris Initiative" issue via the sign.yml
+# template, parse the structured fields, append a signatures line to
+# SIGNATORIES.md, and open a pull request that closes the issue.
+#
+# Re-runs on issue edits, so if someone fixes a missing endorsement we
+# update the existing PR (peter-evans/create-pull-request reuses the
+# branch named after the issue).
+
+on:
+  issues:
+    types: [opened, edited, reopened]
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  build-pr:
+    # Only act on issues that carry the auto-applied `signature` label.
+    # Other labels (e.g. "question") won't trigger this workflow.
+    if: contains(github.event.issue.labels.*.name, 'signature')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Parse issue and update SIGNATORIES.md
+        id: parse
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            const body = context.payload.issue.body || '';
+            const issueNum = context.payload.issue.number;
+            const issueUrl = context.payload.issue.html_url;
+            const repo = context.repo;
+
+            // ── Parse issue-form body ──────────────────────────────────
+            // GitHub renders each form field as:   ### Heading\n\nvalue\n\n
+            // Empty optional fields render as `_No response_`.
+            function parseFields(text) {
+              const fields = {};
+              const chunks = text.split(/^###\s+/m).slice(1);
+              for (const chunk of chunks) {
+                const i = chunk.indexOf('\n');
+                if (i === -1) continue;
+                const heading = chunk.slice(0, i).trim();
+                const value = chunk.slice(i).trim();
+                fields[heading] = value;
+              }
+              return fields;
+            }
+            const fields = parseFields(body);
+
+            const norm = (v) => (!v || v === '_No response_') ? '' : v;
+            function findField(keyword) {
+              const k = Object.keys(fields).find(
+                h => h.toLowerCase().includes(keyword.toLowerCase())
+              );
+              return k ? norm(fields[k]) : '';
+            }
+
+            const name        = findField('Name (individual)') || findField('organization name');
+            const affiliation = findField('Affiliation');
+            const url         = findField('Verifying URL');
+            const category    = findField('List me under');
+            const endorsement = findField('Endorsement');
+
+            async function bail(msg, comment) {
+              core.setOutput('ready', 'false');
+              await github.rest.issues.createComment({
+                ...repo, issue_number: issueNum, body: comment,
+              });
+              core.setFailed(msg);
+            }
+
+            // ── Validation ─────────────────────────────────────────────
+            if (!name) {
+              return bail(
+                'Missing name',
+                '⚠️ Could not parse a name from your submission. Please edit the issue and fill in the **Name** field — the workflow will re-run automatically.'
+              );
+            }
+
+            if (category !== 'Organizations' && category !== 'Individuals') {
+              return bail(
+                'Missing/invalid category',
+                '⚠️ Could not determine the category (Organizations or Individuals). Please edit the issue and select one in the **List me under** dropdown.'
+              );
+            }
+
+            const checked   = (endorsement.match(/-\s*\[[xX]\]/g) || []).length;
+            const unchecked = (endorsement.match(/-\s*\[\s\]/g) || []).length;
+            if (checked < 3 || unchecked > 0) {
+              return bail(
+                'Endorsement incomplete',
+                `⚠️ All three endorsement checkboxes must be ticked. Currently ${checked} of ${checked + unchecked} are checked. Please edit the issue to complete the endorsement; the workflow will re-run automatically.`
+              );
+            }
+
+            // ── Format the signature line ──────────────────────────────
+            let line = `- **${name}**`;
+            if (affiliation) line += ` — *${affiliation}*`;
+            if (url)         line += ` — ${url}`;
+
+            // ── Update SIGNATORIES.md ──────────────────────────────────
+            const sigPath = 'SIGNATORIES.md';
+            let content = fs.readFileSync(sigPath, 'utf8');
+
+            if (content.includes(line)) {
+              return bail(
+                'Duplicate',
+                'ℹ️ This exact signature line is already present in [SIGNATORIES.md](../blob/main/SIGNATORIES.md). No pull request was opened. If this is unexpected, please open a new issue with the corrected entry.'
+              );
+            }
+
+            // Insert just before the section's `---` terminator,
+            // preserving any existing entries.
+            const re = new RegExp(`(## ${category}\\b[\\s\\S]*?)(\\n---)`, 'm');
+            if (!re.test(content)) {
+              return bail(
+                `Section "## ${category}" not found`,
+                '⚠️ Internal error: could not locate the right section in `SIGNATORIES.md`. A maintainer has been notified.'
+              );
+            }
+            content = content.replace(re, (_m, section, sep) => {
+              const trimmed = section.replace(/\s+$/, '');
+              return `${trimmed}\n${line}\n${sep}`;
+            });
+            fs.writeFileSync(sigPath, content);
+
+            // ── Branch name (deterministic per issue, so re-runs update the same PR) ──
+            const slug = name
+              .toLowerCase()
+              .normalize('NFD').replace(/[̀-ͯ]/g, '')
+              .replace(/[^a-z0-9]+/g, '-')
+              .replace(/^-+|-+$/g, '')
+              .slice(0, 40) || 'signer';
+
+            core.setOutput('name',     name);
+            core.setOutput('category', category);
+            core.setOutput('line',     line);
+            core.setOutput('branch',   `signatures/issue-${issueNum}-${slug}`);
+            core.setOutput('issue',    String(issueNum));
+            core.setOutput('issueUrl', issueUrl);
+            core.setOutput('ready',    'true');
+
+      - name: Open / update pull request
+        if: steps.parse.outputs.ready == 'true'
+        id: pr
+        uses: peter-evans/create-pull-request@v7
+        with:
+          base: main
+          branch: ${{ steps.parse.outputs.branch }}
+          commit-message: |
+            Sign: ${{ steps.parse.outputs.name }}
+
+            Auto-generated from issue #${{ steps.parse.outputs.issue }}.
+          title: "Sign: ${{ steps.parse.outputs.name }}"
+          body: |
+            Auto-generated from #${{ steps.parse.outputs.issue }}.
+
+            Adds the following line to **${{ steps.parse.outputs.category }}** in `SIGNATORIES.md`:
+
+            ```
+            ${{ steps.parse.outputs.line }}
+            ```
+
+            All three endorsement checkboxes were confirmed in the source issue. A maintainer will give this a light sanity check and merge.
+
+            Closes #${{ steps.parse.outputs.issue }}
+          labels: signature
+          delete-branch: true
+
+      - name: Comment on issue
+        if: steps.parse.outputs.ready == 'true' && steps.pr.outputs.pull-request-number
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNum = '${{ steps.pr.outputs.pull-request-number }}';
+            const prUrl = '${{ steps.pr.outputs.pull-request-url }}';
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: ${{ steps.parse.outputs.issue }},
+              body: `✅ Thanks — your signature has been queued in pull request #${prNum} (${prUrl}). A maintainer will review and merge it shortly. This issue will close automatically once the PR is merged.`,
+            });
