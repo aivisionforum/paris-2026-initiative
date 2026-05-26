@@ -31,7 +31,7 @@ The following organizations and individuals affirmed the four principles in the 
 ## Individuals
 
 <!-- Sign by opening a pull request that adds your line below this comment. -->
-
+- **ParisInitiative Tester**
 
 ---
 
