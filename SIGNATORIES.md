@@ -24,7 +24,7 @@ The following organizations and individuals affirmed the four principles in the 
 ## Organizations
 
 <!-- Sign by opening a pull request that adds your line below this comment. -->
-
+- **3rd Test Signator**
 
 ---
 
